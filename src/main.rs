@@ -5,17 +5,40 @@ use ratatui::{
 
 use material::colors;
 use ratatui::prelude::*;
+
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
+use std::fs::File;
+use std::io::BufReader;
+
 const SIZE: usize = 17;
 const BOMB:i32 = -2;
 const FOOD:i32 = -1;
 const CAUDA:i32 = 1;
 const VAZIO:i32 = 0;
 
+fn ddebug(board: [i32; SIZE * SIZE],) -> String {
+    let mut result = String::new();
+    for i in 0..SIZE {
+        for j in 0..SIZE {
+           result.push_str(format!("{}", board[SIZE * i + j]).as_str()); 
+        }
+    result.push_str("\n");
+    }
+    result
+}
+
 use std::{io, str::FromStr};
 fn main() -> io::Result<()> {
     let mut terminal = ratatui::init();
+    
+    let (_stream, stream_handle) = OutputStream::try_default().expect("Failed to load audio");
+        
     let mut app = App {
+        
+        sink: None,
+        stream_handle,
         exit: false,
+        music: false,
         board: [0; SIZE * SIZE],
         n: 1,
         offset: 0,
@@ -31,6 +54,8 @@ fn main() -> io::Result<()> {
     };
 
     app.new_game();
+    app.mute();
+
     let app_result = app.run(&mut terminal);
 
     ratatui::restore();
@@ -39,6 +64,11 @@ fn main() -> io::Result<()> {
 
 // #[derive(Default)]
 pub struct App {
+    //audio
+    sink: Option<Sink>,
+    stream_handle: OutputStreamHandle,
+    music: bool,
+
     exit: bool,
     board: [i32; SIZE*SIZE],
     offset: i16,
@@ -85,11 +115,12 @@ impl App {
         
         //Colidiu
         if colide(self.i_cobrinha, self.offset) {
-            self.gameover();
+            self.gameover("👨 Bateu na parede 🧱");
             return
         }
 
         //Computou proximo x, y
+        // debug!("i_cobrinha{} i_proxikmo{} ", self.i_cobrinha, self.offset);
         self.i_proximo = compute_proximo(self.i_cobrinha, self.offset).unwrap(); 
 
         //Inverteu
@@ -99,9 +130,10 @@ impl App {
         self.offset = 0;
         
         //Embaracou
-        if self.i_proximo > 0 &&
+        if self.i_proximo < 999 &&
            self.board[self.i_proximo] > 1 {
-            self.gameover();
+            // self.gameover(format!("{}", ddebug(self.board)).as_str());
+
             return
         }
 
@@ -132,12 +164,14 @@ impl App {
 
     fn handle_key_event(&mut self, key_event: crossterm::event::KeyEvent ) -> io::Result<()> {
         match (key_event.kind, key_event.code) {
-            (KeyEventKind::Press, KeyCode::Char('x')) => { self.exit = true;},
+            (KeyEventKind::Press, KeyCode::Esc) => { self.exit = true;},
             (KeyEventKind::Press, KeyCode::Char('w')) => { self.up();},
             (KeyEventKind::Press, KeyCode::Char('a')) => { self.left();},
             (KeyEventKind::Press, KeyCode::Char('s')) => { self.down();},
             (KeyEventKind::Press, KeyCode::Char('d')) => { self.right();},
-            (KeyEventKind::Press, KeyCode::Char('n')) => { self.new_game();},
+            (KeyEventKind::Press, KeyCode::Char('z')) => { self.new_game();},
+            (KeyEventKind::Press, KeyCode::Char('m')) => { self.mute();},
+            (KeyEventKind::Press, KeyCode::Char('n')) => { self.next_music();},
 
             (KeyEventKind::Press, KeyCode::Up) => {self.up(); }
             (KeyEventKind::Press, KeyCode::Left) => {self.left(); }
@@ -147,8 +181,50 @@ impl App {
         }
         Ok(())
     }
+    
+    fn play_audio(&mut self, paths: &[&str]) {
+        let sink = Sink::try_new(&self.stream_handle).expect("Failed to create sink");
+    
+        for path in paths {
+            if let Ok(file) = File::open(path) {
+                let source = Decoder::new(BufReader::new(file))
+                    .expect("Failed to decode audio");
+                    // .repeat_infinite(); 
+                sink.append(source);
+            } else {
+                eprintln!("Failed to open file: {}", path);
+            }
+        }
+    
+        sink.set_volume(0.5); // use your app's current volume
+        sink.play(); // starts automatically, but explicit is fine
+        self.sink = Some(sink);
+    }
+
+    fn mute_audio(&mut self, ) {
+        if let Some(sink) = &self.sink {
+            sink.stop();  
+        }
+        self.sink = None;
+    }
+
+    fn mute(&mut self) {
+        self.music = !self.music;
+        if self.music {
+            self.play_audio(&["assets/got.mp3", "assets/got2.mp3", "assets/drama.mp3", "assets/drama2.mp3"]);
+        } else {
+            self.mute_audio();
+        }
+    }
+
+    fn next_music(&mut self) {
+        if let Some(sink) = &self.sink {
+            sink.skip_one();}
+    }
 
     fn new_game(&mut self) {
+        let (_stream, stream_handle) = OutputStream::try_default().expect("Failed to init audio");
+        // self.music = false;
         self.board = [0; SIZE * SIZE];
         self.offset = 0;
         self.n = 1;
@@ -162,13 +238,13 @@ impl App {
         self.board[self.i_cobrinha] = 1;
         self.board[self.i_comida] = -1;
 
-        self.i_proximo = 0;
+        self.i_proximo = 999;
         self.score = 0;
         self.level = 1;
         self.mensagem = "Novo jogo gerado...".to_string();
     }
 
-    fn gameover(&mut self) {
+    fn gameover(&mut self, message: &str) {
         // for x in 6..SIZE-6 { 
         //     for y in 6..SIZE-6 {
         //         if (x + y)%2 == 0 {
@@ -176,12 +252,12 @@ impl App {
         //         }
         //     }
         // }
-        self.mensagem = "Fim do jogo...".to_string();
+        self.mensagem = format!("{}", message); 
     }
 
     fn winner(&mut self) {
-        for x in 6..SIZE-6 { 
-            for y in 6..SIZE-6 {
+        for y in 6..SIZE-6 { 
+            for x in 6..SIZE-6 {
                 if (x + y)%2 == 0 {
                     self.board[index(x as u32, y as u32)] = self.n;
                 }
@@ -222,6 +298,8 @@ impl App {
         }
         self.board[self.i_proximo] = self.n;
         self.i_cobrinha = self.i_proximo;
+        self.i_proximo = 999;
+        self.mensagem = "".to_string();
     }
 
     fn up(&mut self) {
@@ -263,8 +341,8 @@ impl Widget for &App {
     
             // Title
             let title_line = Line::styled(
-                "vs1",
-                Style::default().fg(Color::from_str(colors::RED_400.to_string().as_str()).unwrap()),
+                "SNAKE 🌎",
+                Style::default().fg(Color::from_str(colors::BLUE_400.to_string().as_str()).unwrap()),
             );
             Paragraph::new(title_line).render(title_area, buf);
             render_matrix(matrix_area, buf, &self.board);
@@ -308,9 +386,6 @@ pub fn render_matrix(area: Rect, buf: &mut Buffer, data: &[i32]) {
                 -1 => ("🍏", Color::Green),
                 // 0 => ("││", Color::Black),
                 0 => render_background(col, row),
-                // 0 => ("▒▒", Color::Black),
-                // 0 => ("▓▓", Color::Black),
-                // 0 => ("🔲", Color::DarkGray),
                 1 => ("👾", Color::Green),
                 _ => ("👾", Color::Green),
             };
@@ -329,7 +404,7 @@ pub fn render_matrix(area: Rect, buf: &mut Buffer, data: &[i32]) {
     Paragraph::new(lines)
     .block(
         Block::default()
-            .title("snake 1.0")
+            // .title("")
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Gray)))
     .render(box_area, buf);
@@ -351,15 +426,15 @@ pub fn render_info_box(area: Rect, buf: &mut Buffer, app: &App) {
         Line::from(vec![Span::styled(" best: ", Style::default()), Span::raw(app.best.to_string())]),
         Line::from(vec![Span::styled(" level: ", Style::default()), Span::raw(app.level.to_string())]),
         Line::from(vec![Span::styled("     ", Style::default()) ]),
-        Line::from(vec![Span::styled("     ", Style::default())]),
         Line::from(vec![Span::styled("         ", Style::default())]),
         Line::from(vec![Span::styled("      ^", Style::default())]),
         Line::from(vec![Span::styled("      w", Style::default())]),
         Line::from(vec![Span::styled("  ← a s d →  ", Style::default())]),
         Line::from(vec![Span::styled("   ", Style::default())]),
-        Line::from(vec![Span::styled("      ", Style::default())]),
-        Line::from(vec![Span::styled("  [x] sair", Style::default())]),
-        Line::from(vec![Span::styled("  [n] novo jogo", Style::default())]),
+        Line::from(vec![Span::styled("  [m] música 🔉🔇   ", Style::default())]),
+        Line::from(vec![Span::styled("  [n] nova música", Style::default())]),
+        Line::from(vec![Span::styled("  [z] reiniciar", Style::default())]),
+        Line::from(vec![Span::styled("  Esc sair", Style::default())]),
     ];
 
     let paragraph = Paragraph::new(lines)
@@ -441,7 +516,7 @@ fn _coord(alfa: u32) -> (u32, u32) {
 }
 
 fn index( a: u32, b: u32) -> usize {
-    a as usize * SIZE + b as usize
+    b as usize * SIZE + a as usize
 }
 
 fn render_background(x: usize, y: usize) -> (&'static str, Color) {
@@ -450,7 +525,7 @@ fn render_background(x: usize, y: usize) -> (&'static str, Color) {
         (0, 0) => ("██", Color::Black),
         (0, 1) => ("▓▓", Color::Black),
         (1, 0) => ("▒▒", Color::Black),
-        _ => ("░░", Color::Black),
+        _ => ("▒▒", Color::Black),
     }
 }
 

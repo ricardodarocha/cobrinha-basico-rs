@@ -1,6 +1,6 @@
 [package]
 name = "rata1"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [dependencies]
@@ -8,3 +8,4 @@ crossterm = "0.29.0"
 ratatui = { version = "0.29.0", features = ["all-widgets"] }
 material = { version = "0.1.1", features = ["ratatui"] }
 rand = "0.9.1"
+rodio = "0.20.1"
