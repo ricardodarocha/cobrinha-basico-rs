@@ -307,7 +307,7 @@ pub fn render_matrix(area: Rect, buf: &mut Buffer, data: &[i32]) {
                 // -1 => ("🎃", Color::Yellow),
                 -1 => ("🍏", Color::Green),
                 // 0 => ("││", Color::Black),
-                0 => ("░░", Color::Black),
+                0 => render_background(col, row),
                 // 0 => ("▒▒", Color::Black),
                 // 0 => ("▓▓", Color::Black),
                 // 0 => ("🔲", Color::DarkGray),
@@ -444,6 +444,26 @@ fn index( a: u32, b: u32) -> usize {
     a as usize * SIZE + b as usize
 }
 
+fn render_background(x: usize, y: usize) -> (&'static str, Color) {
+    use patterns::*;
+    match (chess_mash(x, y), noise(x, y)) {
+        (0, 0) => ("██", Color::Black),
+        (0, 1) => ("▓▓", Color::Black),
+        (1, 0) => ("▒▒", Color::Black),
+        _ => ("░░", Color::Black),
+    }
+}
+
+pub mod patterns {
+    pub fn chess_mash(x: usize, y: usize) -> usize {
+        (x + y) % 2
+    }
+
+    pub fn noise(x: usize, y: usize) -> usize {
+        ((x * y) % 3) % 2
+    }
+}
+
 // #[test]
 // fn test_index() {
 //     assert!(index(0,0)==0);
@@ -464,4 +484,3 @@ fn index( a: u32, b: u32) -> usize {
 //    assert!(coord(18) == (1, 1));
 //    assert!(coord(19) == (1, 2));
 // }
-
