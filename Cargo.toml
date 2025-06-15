@@ -1,5 +1,5 @@
 [package]
-name = "rata1"
+name = "cobra"
 version = "0.1.1"
 edition = "2024"
 
@@ -9,3 +9,16 @@ ratatui = { version = "0.29.0", features = ["all-widgets"] }
 material = { version = "0.1.1", features = ["ratatui"] }
 rand = "0.9.1"
 rodio = "0.20.1"
+
+[package.metadata.winres]
+OriginalFilename = "cobra.exe"
+LegalCopyright = "Ricardo da Rocha <ricardodarocha@outlook.com>"
+FileDescription = "Arcade implementation of Snake Game for terminal with RATATUI rs" 
+ProductName = "cobrinha"
+
+[build-dependencies]
+cargo_metadata = "0.12"
+winres = "0.1.12"
+
+[build]
+rustflags = ["-C", "link-args=-Wl,--subsystem,windows"]
