@@ -1,17 +1,26 @@
 use crossterm::event::{KeyCode, KeyEventKind};
 use ratatui::{
-    backend::Backend, layout::{Constraint, Layout}, prelude::{Buffer, Rect}, style::{Color, Style, Stylize}, symbols::border, text::Line, widgets::{Block, Borders, Gauge, Paragraph, Widget}, DefaultTerminal, Frame
+    /*backend::Backend,*/ 
+    layout::{Constraint, Layout}, 
+    prelude::{Buffer, Rect}, 
+    style::{Color, Style/* , Stylize*/}, 
+    /*symbols::border,*/ text::Line, 
+    widgets::{Block, Borders, /*Gauge,*/ Paragraph, Widget}, DefaultTerminal, Frame
 };
 
 use material::colors;
 use ratatui::prelude::*;
 
-use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink, Source};
+use rodio::{Decoder, OutputStream, OutputStreamHandle, Sink/*, Source*/};
 use std::fs::File;
 use std::io::BufReader;
 
+use std::io;
+use std::time::{Duration, Instant};
+// use std::thread;
+
 const SIZE: usize = 17;
-const BOMB:i32 = -2;
+// const BOMB:i32 = -2;
 const FOOD:i32 = -1;
 const CAUDA:i32 = 1;
 const VAZIO:i32 = 0;
@@ -27,8 +36,19 @@ fn ddebug(board: [i32; SIZE * SIZE],) -> String {
     result
 }
 
-use std::{io, str::FromStr};
+use std::str::FromStr/*, process::Command*/;
 fn main() -> io::Result<()> {
+
+    // #[cfg(windows)]
+    // {
+    //     let _ = Command::new("cmd")
+    //         .args(["/C", "chcp 65001"])
+    //         .status();
+    // }
+
+    // // Print Unicode text
+    // println!("✓ Unicode Suppor");
+
     let mut terminal = ratatui::init();
     
     let (_stream, stream_handle) = OutputStream::try_default().expect("Failed to load audio");
@@ -49,6 +69,7 @@ fn main() -> io::Result<()> {
         best: 0,
         score: 0,
         level: 1,
+        fps: 400,
         historico: vec![],
         mensagem: "😀 Bem Vindo ".to_string(),
     };
@@ -80,6 +101,7 @@ pub struct App {
     best: u16,
     score: u16,
     level: u16, 
+    fps: u64,
     historico: Vec<Premios>,
     mensagem: String,
 
@@ -91,20 +113,51 @@ pub struct Premios {
 }
 
 impl App {
-    fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
-        while !self.exit {
-            match crossterm::event::read()? {
-                crossterm::event::Event::Key(key_event) => self.handle_key_event(key_event)?,
-                _ => {}
-            };
-            self.update();
-            terminal.draw(|frame| self.draw(frame))?;
+    //replaced to manege events without blocking
+    // fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
+        
+    //     let tick_rate = Duration::from_millis(100); // 10 FPS
+    //     let mut last_tick = Instant::now();
+        
+    //     while !self.exit {
+    //         match crossterm::event::read()? {
+    //             crossterm::event::Event::Key(key_event) => self.handle_key_event(key_event)?,
+    //             _ => {}
+    //         };
+    //         self.update();
+    //         terminal.draw(|frame| self.draw(frame))?;
 
+    //     }
+
+    //     Ok(())
+    // }]
+    pub fn run(&mut self, terminal: &mut DefaultTerminal) -> io::Result<()> {
+
+        while !self.exit {
+            let tick_rate = Duration::from_millis(self.fps); // 10 FPS
+            let mut last_tick = Instant::now();
+            let timeout = tick_rate
+                .checked_sub(last_tick.elapsed())
+                .unwrap_or_else(|| Duration::from_secs(0));
+
+            // Poll for key events non-blocking (like kbhit)
+            if crossterm::event::poll(timeout)? {
+                if let crossterm::event::Event::Key(key_event) = crossterm::event::read()? {
+                    self.handle_key_event(key_event)?;
+                }
+            }
+
+            if last_tick.elapsed() >= tick_rate {
+                self.update();  
+                last_tick = Instant::now();
+            }
+
+            terminal.draw(|frame| self.draw(frame))?;
         }
 
         Ok(())
     }
-    
+        
     fn update(&mut self) {
         
         //Ganhou
@@ -126,14 +179,16 @@ impl App {
         //Inverteu
         if self.board[self.i_proximo] == self.n-1 {
             self.revert();
+            self.mensagem = "👨 Agora você aprendeu a andar de costa 🐛".to_string();
         } 
-        self.offset = 0;
+        // self.offset = 0;
         
         //Embaracou
         if self.i_proximo < 999 &&
            self.board[self.i_proximo] > 1 {
             // self.gameover(format!("{}", ddebug(self.board)).as_str());
 
+            // self.mensagem = "👨 Cuidado para não enroscar 🐛".to_string();
             return
         }
 
@@ -143,14 +198,27 @@ impl App {
             self.n+=1;
             self.score += 1;
             self.level = self.score / 11 + 1;
-            self.i_cobrinha = self.i_proximo;
             
+            if self.level > 5 {
+                
+                self.fps = 83; 
+            } else {
+                let raw_delay = 400u64.saturating_sub((self.level - 1) as u64 * 100);
+                self.fps = raw_delay.max(100); // minimum delay = 100ms
+            }
+
+            
+
+            self.i_cobrinha = self.i_proximo;
+           
             let mut k = seed();
             while self.board[k] != 0 {
                 k = seed(); 
             }
             self.i_comida = k;
             self.board[k] = FOOD;
+            
+            self.mensagem = "👨 Boa 🍉".to_string();
             return
         }
 
@@ -165,13 +233,13 @@ impl App {
     fn handle_key_event(&mut self, key_event: crossterm::event::KeyEvent ) -> io::Result<()> {
         match (key_event.kind, key_event.code) {
             (KeyEventKind::Press, KeyCode::Esc) => { self.exit = true;},
-            (KeyEventKind::Press, KeyCode::Char('w')) => { self.up();},
-            (KeyEventKind::Press, KeyCode::Char('a')) => { self.left();},
-            (KeyEventKind::Press, KeyCode::Char('s')) => { self.down();},
-            (KeyEventKind::Press, KeyCode::Char('d')) => { self.right();},
-            (KeyEventKind::Press, KeyCode::Char('z')) => { self.new_game();},
-            (KeyEventKind::Press, KeyCode::Char('m')) => { self.mute();},
-            (KeyEventKind::Press, KeyCode::Char('n')) => { self.next_music();},
+            (KeyEventKind::Press, KeyCode::Char('w') | KeyCode::Char('W')) => { self.up();},
+            (KeyEventKind::Press, KeyCode::Char('a') | KeyCode::Char('A')) => { self.left();},
+            (KeyEventKind::Press, KeyCode::Char('s') | KeyCode::Char('S')) => { self.down();},
+            (KeyEventKind::Press, KeyCode::Char('d') | KeyCode::Char('D')) => { self.right();},
+            (KeyEventKind::Press, KeyCode::Char('z') | KeyCode::Char('Z')) => { self.new_game();},
+            (KeyEventKind::Press, KeyCode::Char('m') | KeyCode::Char('M')) => { self.mute();},
+            (KeyEventKind::Press, KeyCode::Char('n') | KeyCode::Char('N')) => { self.next_music();},
 
             (KeyEventKind::Press, KeyCode::Up) => {self.up(); }
             (KeyEventKind::Press, KeyCode::Left) => {self.left(); }
@@ -183,16 +251,16 @@ impl App {
     }
     
     fn play_audio(&mut self, paths: &[&str]) {
-        let sink = Sink::try_new(&self.stream_handle).expect("Failed to create sink");
+        let sink = Sink::try_new(&self.stream_handle).expect("🔇 Não foi possível inicializar o dispositivo de áudio ");
     
         for path in paths {
             if let Ok(file) = File::open(path) {
                 let source = Decoder::new(BufReader::new(file))
-                    .expect("Failed to decode audio");
+                    .expect("🔇 Não foi possível decodificar o áudio");
                     // .repeat_infinite(); 
                 sink.append(source);
             } else {
-                eprintln!("Failed to open file: {}", path);
+                eprintln!("🔇 Não foi possível abrir o arquivo de áudio: {}", path);
             }
         }
     
@@ -223,7 +291,7 @@ impl App {
     }
 
     fn new_game(&mut self) {
-        let (_stream, stream_handle) = OutputStream::try_default().expect("Failed to init audio");
+        let (_stream, _stream_handle) = OutputStream::try_default().expect("🔇 Não foi possível iniciar o áudio");
         // self.music = false;
         self.board = [0; SIZE * SIZE];
         self.offset = 0;
@@ -241,7 +309,7 @@ impl App {
         self.i_proximo = 999;
         self.score = 0;
         self.level = 1;
-        self.mensagem = "Novo jogo gerado...".to_string();
+        self.mensagem = "🎲 Novo jogo gerado ".to_string();
     }
 
     fn gameover(&mut self, message: &str) {
@@ -300,6 +368,12 @@ impl App {
         self.i_cobrinha = self.i_proximo;
         self.i_proximo = 999;
         self.mensagem = "".to_string();
+
+        if let Some(sink) = &self.sink {
+            if self.music && sink.is_paused() {
+                self.mute();
+            }
+        }
     }
 
     fn up(&mut self) {
@@ -345,7 +419,7 @@ impl Widget for &App {
                 Style::default().fg(Color::from_str(colors::BLUE_400.to_string().as_str()).unwrap()),
             );
             Paragraph::new(title_line).render(title_area, buf);
-            render_matrix(matrix_area, buf, &self.board);
+            render_matrix(matrix_area, buf, &self.board, &self.level, &self.n);
             render_info_box(matrix_area, buf, self);
 
             render_message(matrix_area, buf, self);
@@ -373,7 +447,7 @@ impl Widget for &App {
     }
 }
 
-pub fn render_matrix(area: Rect, buf: &mut Buffer, data: &[i32]) {
+pub fn render_matrix(area: Rect, buf: &mut Buffer, data: &[i32], level: &u16, n: &i32) {
     let mut lines = Vec::with_capacity(SIZE);
 
     for row in 0..SIZE {
@@ -383,11 +457,13 @@ pub fn render_matrix(area: Rect, buf: &mut Buffer, data: &[i32]) {
             let (symbol, color) = match value {
                 -2 => ("💣", Color::Red),
                 // -1 => ("🎃", Color::Yellow),
-                -1 => ("🍏", Color::Green),
+                -1 => {if level < &2_u16 {("🍏", Color::Red) } else {("🎃", Color::Yellow)} },
                 // 0 => ("││", Color::Black),
                 0 => render_background(col, row),
-                1 => ("👾", Color::Green),
-                _ => ("👾", Color::Green),
+                1 if n != &1 && level < &4 => ("💜", Color::Green),
+                1 if n != &1 => ("🧡", Color::Red),
+                _ if level < &4 => ("👾", Color::Green),
+                _ => ("👺", Color::Red),
             };
             spans.push(Span::styled(symbol, Style::default().fg(color)));
         }
@@ -440,7 +516,7 @@ pub fn render_info_box(area: Rect, buf: &mut Buffer, app: &App) {
     let paragraph = Paragraph::new(lines)
         .block(
             Block::default()
-                .title("Status")
+                .title("Status 🔮")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::White)),
         );
@@ -455,7 +531,7 @@ pub fn render_message(area: Rect, buf: &mut Buffer, app: &App) {
     let paragraph = Paragraph::new(msg)
         .block(
             Block::default()
-                .title("Mensagem")
+                .title("💬 Mensagem")
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::White)),
         );
@@ -522,6 +598,7 @@ fn index( a: u32, b: u32) -> usize {
 fn render_background(x: usize, y: usize) -> (&'static str, Color) {
     use patterns::*;
     match (chess_mash(x, y), noise(x, y)) {
+        // Color::from_str(colors::GREY_900.to_string().as_str()).unwrap()
         (0, 0) => ("██", Color::Black),
         (0, 1) => ("▓▓", Color::Black),
         (1, 0) => ("▒▒", Color::Black),
